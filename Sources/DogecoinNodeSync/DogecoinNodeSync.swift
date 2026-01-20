@@ -4,8 +4,6 @@ import Foundation
 
 @main
 struct DogecoinNodeSync: AsyncParsableCommand {
-    /// Retained to keep the signal handler alive
-    private static var sigintSource: DispatchSourceSignal?
     static let configuration = CommandConfiguration(
         abstract: "Sync Dogecoin block headers using SPV",
         discussion: """
@@ -53,8 +51,9 @@ struct DogecoinNodeSync: AsyncParsableCommand {
         let delegate = SyncDelegate(continuation: continuation)
         syncManager.delegate = delegate
 
-        // Handle Ctrl+C gracefully
-        setupSignalHandler(syncManager: syncManager, continuation: continuation)
+        // Handle Ctrl+C gracefully - must retain the source to keep it alive
+        let signalSource = setupSignalHandler(syncManager: syncManager, continuation: continuation)
+        defer { withExtendedLifetime(signalSource) {} }
 
         // Start sync
         syncManager.start()
@@ -126,7 +125,7 @@ struct DogecoinNodeSync: AsyncParsableCommand {
     private func setupSignalHandler(
         syncManager: SPVSyncManager,
         continuation: AsyncStream<SyncEvent>.Continuation
-    ) {
+    ) -> DispatchSourceSignal {
         let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         signal(SIGINT, SIG_IGN)
         source.setEventHandler {
@@ -135,7 +134,7 @@ struct DogecoinNodeSync: AsyncParsableCommand {
             continuation.finish()
         }
         source.resume()
-        Self.sigintSource = source
+        return source
     }
 }
 
