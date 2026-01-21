@@ -22,6 +22,12 @@ struct DogecoinNodeSync: AsyncParsableCommand {
     @Option(name: .long, help: "Custom storage directory for headers")
     var storage: String?
 
+    /// Maximum consecutive errors before giving up
+    private let maxConsecutiveErrors = 10
+
+    /// Timeout for no progress (5 minutes)
+    private let noProgressTimeout: TimeInterval = 300
+
     func run() async throws {
         let dogecoinNetwork = try parseNetwork(network)
         let storageURL = storage.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -61,13 +67,38 @@ struct DogecoinNodeSync: AsyncParsableCommand {
         let progressIndicator = ProgressIndicator()
         progressIndicator.startSpinner(message: "Connecting to peers")
 
-        // Process events
+        // Process events with error tracking and progress timeout
         var hasReceivedFirstProgress = false
+        var consecutiveErrors = 0
+        var lastProgressTime = Date()
+        var lastHeight: Int32 = syncManager.currentHeight
+
+        // Start a background task to check for progress timeout
+        let timeoutTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // Check every 30 seconds
+
+                let timeSinceProgress = Date().timeIntervalSince(lastProgressTime)
+                if timeSinceProgress > noProgressTimeout {
+                    continuation.yield(.timeout)
+                    break
+                }
+            }
+        }
+
+        defer { timeoutTask.cancel() }
 
         for await event in stream {
             switch event {
             case .progress(let progress, let height):
                 let target = syncManager.targetHeight
+
+                // Reset error count and update progress time on successful progress
+                if height > lastHeight {
+                    consecutiveErrors = 0
+                    lastProgressTime = Date()
+                    lastHeight = height
+                }
 
                 if !hasReceivedFirstProgress {
                     hasReceivedFirstProgress = true
@@ -95,9 +126,34 @@ struct DogecoinNodeSync: AsyncParsableCommand {
                 return
 
             case .error(let error):
+                consecutiveErrors += 1
                 progressIndicator.stopSpinner()
                 print("")
-                print("Error: \(error.localizedDescription)")
+                print("Error (\(consecutiveErrors)/\(maxConsecutiveErrors)): \(error.localizedDescription)")
+
+                if consecutiveErrors >= maxConsecutiveErrors {
+                    print("")
+                    print("Too many consecutive errors. Stopping sync.")
+                    print("Current height: \(syncManager.currentHeight)")
+                    print("Progress has been saved. Run again to resume.")
+                    syncManager.stop()
+                    return
+                }
+
+                // Restart spinner if we're still going
+                if hasReceivedFirstProgress {
+                    progressIndicator.startSpinner(message: "Recovering from error")
+                }
+
+            case .timeout:
+                progressIndicator.stopSpinner()
+                print("")
+                print("")
+                print("Sync stalled - no progress for \(Int(noProgressTimeout)) seconds")
+                print("Current height: \(syncManager.currentHeight)")
+                print("Progress has been saved. Run again to resume.")
+                syncManager.stop()
+                return
 
             case .interrupted:
                 progressIndicator.stopSpinner()
@@ -144,6 +200,7 @@ enum SyncEvent: Sendable {
     case progress(Double, height: Int32)
     case completed
     case error(Error)
+    case timeout
     case interrupted
 }
 
