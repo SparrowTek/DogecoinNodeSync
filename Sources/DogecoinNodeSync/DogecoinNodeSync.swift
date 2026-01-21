@@ -2,6 +2,30 @@ import ArgumentParser
 import DogecoinKit
 import Foundation
 
+/// Actor for thread-safe progress tracking
+private actor ProgressTracker {
+    private var lastProgressTime = Date()
+    private var lastHeight: Int32 = 0
+
+    func initialize(height: Int32) {
+        lastHeight = height
+        lastProgressTime = Date()
+    }
+
+    func recordProgress(height: Int32) -> Bool {
+        if height > lastHeight {
+            lastHeight = height
+            lastProgressTime = Date()
+            return true
+        }
+        return false
+    }
+
+    func timeSinceLastProgress() -> TimeInterval {
+        Date().timeIntervalSince(lastProgressTime)
+    }
+}
+
 @main
 struct DogecoinNodeSync: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -21,12 +45,6 @@ struct DogecoinNodeSync: AsyncParsableCommand {
 
     @Option(name: .long, help: "Custom storage directory for headers")
     var storage: String?
-
-    /// Maximum consecutive errors before giving up
-    private let maxConsecutiveErrors = 10
-
-    /// Timeout for no progress (5 minutes)
-    private let noProgressTimeout: TimeInterval = 300
 
     func run() async throws {
         let dogecoinNetwork = try parseNetwork(network)
@@ -67,18 +85,22 @@ struct DogecoinNodeSync: AsyncParsableCommand {
         let progressIndicator = ProgressIndicator()
         progressIndicator.startSpinner(message: "Connecting to peers")
 
+        // Configuration
+        let maxConsecutiveErrors = 10
+        let noProgressTimeout: TimeInterval = 300
+
         // Process events with error tracking and progress timeout
         var hasReceivedFirstProgress = false
         var consecutiveErrors = 0
-        var lastProgressTime = Date()
-        var lastHeight: Int32 = syncManager.currentHeight
+        let progressTracker = ProgressTracker()
+        await progressTracker.initialize(height: syncManager.currentHeight)
 
         // Start a background task to check for progress timeout
         let timeoutTask = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30_000_000_000) // Check every 30 seconds
 
-                let timeSinceProgress = Date().timeIntervalSince(lastProgressTime)
+                let timeSinceProgress = await progressTracker.timeSinceLastProgress()
                 if timeSinceProgress > noProgressTimeout {
                     continuation.yield(.timeout)
                     break
@@ -94,10 +116,9 @@ struct DogecoinNodeSync: AsyncParsableCommand {
                 let target = syncManager.targetHeight
 
                 // Reset error count and update progress time on successful progress
-                if height > lastHeight {
+                let didProgress = await progressTracker.recordProgress(height: height)
+                if didProgress {
                     consecutiveErrors = 0
-                    lastProgressTime = Date()
-                    lastHeight = height
                 }
 
                 if !hasReceivedFirstProgress {
