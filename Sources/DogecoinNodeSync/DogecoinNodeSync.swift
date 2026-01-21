@@ -58,17 +58,24 @@ struct DogecoinNodeSync: AsyncParsableCommand {
             print("Storage: ~/Library/Caches/DogecoinKit/headers/\(networkName)")
         }
 
+        let syncManager = SPVSyncManager(
+            network: dogecoinNetwork,
+            storageDirectory: storageURL
+        )
+
+        let startingHeight = syncManager.currentHeight
+        if startingHeight > 0 {
+            print("Resuming from height: \(startingHeight)")
+        } else {
+            print("Starting fresh sync from genesis")
+        }
+
         // Prevent system sleep during sync
         let activity = ProcessInfo.processInfo.beginActivity(
             options: [.idleSystemSleepDisabled, .suddenTerminationDisabled],
             reason: "Syncing Dogecoin block headers"
         )
         defer { ProcessInfo.processInfo.endActivity(activity) }
-
-        let syncManager = SPVSyncManager(
-            network: dogecoinNetwork,
-            storageDirectory: storageURL
-        )
 
         // Create async stream for events
         let (stream, continuation) = AsyncStream<SyncEvent>.makeStream()
