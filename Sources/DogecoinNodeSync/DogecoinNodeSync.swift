@@ -52,11 +52,16 @@ struct DogecoinNodeSync: AsyncParsableCommand {
 
         let networkName = dogecoinNetwork == .mainnet ? "mainnet" : "testnet"
         print("Starting header sync for \(networkName)...")
+
+        // Determine actual storage path for display
+        let displayPath: String
         if let path = storageURL?.path {
-            print("Storage: \(path)")
+            displayPath = path
         } else {
-            print("Storage: ~/Library/Caches/DogecoinKit/headers/\(networkName)")
+            let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            displayPath = caches.appendingPathComponent("DogecoinKit/headers/\(networkName)").path
         }
+        print("Storage: \(displayPath)")
 
         let syncManager = SPVSyncManager(
             network: dogecoinNetwork,
