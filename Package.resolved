@@ -1,6 +1,15 @@
 {
-  "originHash" : "6ca7bc93c81031c9049d9a7c86921e504c404503562e3103cb2cf95e7f246818",
+  "originHash" : "607191653c47880e4287efa79e347da3b5836db17ba34f197c2f568e31bbdf67",
   "pins" : [
+    {
+      "identity" : "dogecoinkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SparrowTek/DogecoinKit",
+      "state" : {
+        "branch" : "main",
+        "revision" : "b3e41913046720c1e85dc8ff2d085ac738f8dedd"
+      }
+    },
     {
       "identity" : "grdb.swift",
       "kind" : "remoteSourceControl",
@@ -8,6 +17,15 @@
       "state" : {
         "revision" : "aa0079aeb82a4bf00324561a40bffe68c6fe1c26",
         "version" : "7.9.0"
+      }
+    },
+    {
+      "identity" : "libdogecoin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/radmakr/libdogecoin",
+      "state" : {
+        "branch" : "ios",
+        "revision" : "e2136e552b2b3255241b4ad64f91a17ee36e7c32"
       }
     },
     {

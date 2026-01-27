@@ -5,11 +5,12 @@ import PackageDescription
 let package = Package(
     name: "DogecoinNodeSync",
     platforms: [
-        .macOS(.v26),
+        .macOS(.v14),
     ],
     dependencies: [
-        .package(path: "../../DogecoinKit"),
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.0"),
+//        .package(path: "../../DogecoinKit"),
+        .package(url: "https://github.com/SparrowTek/DogecoinKit", branch: "main"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     ],
     targets: [
         .executableTarget(
@@ -18,6 +19,9 @@ let package = Package(
                 .product(name: "DogecoinKit", package: "DogecoinKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         ),
     ]
 )
