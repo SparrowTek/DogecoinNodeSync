@@ -26,12 +26,12 @@ struct ExportCommand: ParsableCommand {
     @Option(name: .long, help: "Export format: sqlite (default) or lzfse")
     var format: ExportFormat = .sqlite
 
-    func run() async throws {
+    func run() throws {
         switch format {
         case .sqlite:
             try exportSQLite()
         case .lzfse:
-            try await exportLZFSE()
+            try exportLZFSE()
         }
     }
 
@@ -117,7 +117,7 @@ struct ExportCommand: ParsableCommand {
         print("  Output: \(outputDirectory.path)")
     }
 
-    private func exportLZFSE() async throws {
+    private func exportLZFSE() throws {
         let outputDirectory = try resolveOutputDirectory(output)
         let headersURL = outputDirectory.appendingPathComponent("headers.bin.lzfse")
         let metadataURL = outputDirectory.appendingPathComponent("metadata.json")
@@ -125,8 +125,7 @@ struct ExportCommand: ParsableCommand {
 
         print("Loading header chain...")
         let chain = HeaderChain(network: network.value, storageDirectory: storageURL)
-        await chain.setup()
-        guard let tip = await chain.tip else {
+        guard let tip = chain.tip else {
             throw RuntimeError("Header chain has no tip")
         }
 
@@ -148,7 +147,7 @@ struct ExportCommand: ParsableCommand {
 
         var height: Int32 = 0
         while height <= tip.height {
-            guard let stored = await chain.getHeader(height: height) else {
+            guard let stored = chain.getHeader(height: height) else {
                 throw RuntimeError("Missing header at height \(height)")
             }
             let headerData = stored.header.serializeCore()
