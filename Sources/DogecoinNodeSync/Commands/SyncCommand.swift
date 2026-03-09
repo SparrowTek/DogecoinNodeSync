@@ -44,7 +44,7 @@ struct SyncCommand: AsyncParsableCommand {
             storageDirectory: storageURL
         )
 
-        let startingHeight = syncManager.currentHeight
+        let startingHeight = await syncManager.currentHeight
         if startingHeight > 0 {
             print("Resuming from height: \(startingHeight)")
         } else {
@@ -61,14 +61,14 @@ struct SyncCommand: AsyncParsableCommand {
         // Create async stream for events
         let (stream, continuation) = AsyncStream<SyncEvent>.makeStream()
         let delegate = SyncDelegate(continuation: continuation)
-        syncManager.delegate = delegate
+        await syncManager.setDelegate(delegate)
 
         // Handle Ctrl+C gracefully - must retain the source to keep it alive
         let signalSource = setupSignalHandler(syncManager: syncManager, continuation: continuation)
         defer { withExtendedLifetime(signalSource) {} }
 
         // Start sync
-        syncManager.start()
+        await syncManager.start()
 
         let progressIndicator = ProgressIndicator()
         progressIndicator.startSpinner(message: "Connecting to peers")
@@ -81,7 +81,7 @@ struct SyncCommand: AsyncParsableCommand {
         var hasReceivedFirstProgress = false
         var consecutiveErrors = 0
         let progressTracker = ProgressTracker()
-        await progressTracker.initialize(height: syncManager.currentHeight)
+        await progressTracker.initialize(height: await syncManager.currentHeight)
 
         // Start a background task to check for progress timeout
         let timeoutTask = Task {
@@ -101,7 +101,7 @@ struct SyncCommand: AsyncParsableCommand {
         for await event in stream {
             switch event {
             case .progress(let progress, let height):
-                let target = syncManager.targetHeight
+                let target = await syncManager.targetHeight
 
                 // Reset error count and update progress time on successful progress
                 let didProgress = await progressTracker.recordProgress(height: height)
@@ -123,7 +123,7 @@ struct SyncCommand: AsyncParsableCommand {
 
             case .completed:
                 progressIndicator.stopSpinner()
-                let finalHeight = syncManager.currentHeight
+                let finalHeight = await syncManager.currentHeight
                 print("") // New line after progress bar
                 print("")
                 print("Sync complete!")
@@ -142,9 +142,9 @@ struct SyncCommand: AsyncParsableCommand {
                 if consecutiveErrors >= maxConsecutiveErrors {
                     print("")
                     print("Too many consecutive errors. Stopping sync.")
-                    print("Current height: \(syncManager.currentHeight)")
+                    print("Current height: \(await syncManager.currentHeight)")
                     print("Progress has been saved. Run again to resume.")
-                    syncManager.stop()
+                    await syncManager.stop()
                     return
                 }
 
@@ -158,14 +158,14 @@ struct SyncCommand: AsyncParsableCommand {
                 print("")
                 print("")
                 print("Sync stalled - no progress for \(Int(noProgressTimeout)) seconds")
-                print("Current height: \(syncManager.currentHeight)")
+                print("Current height: \(await syncManager.currentHeight)")
                 print("Progress has been saved. Run again to resume.")
-                syncManager.stop()
+                await syncManager.stop()
                 return
 
             case .interrupted:
                 progressIndicator.stopSpinner()
-                let currentHeight = syncManager.currentHeight
+                let currentHeight = await syncManager.currentHeight
                 print("")
                 print("")
                 print("Sync interrupted at height \(currentHeight)")
@@ -194,7 +194,7 @@ struct SyncCommand: AsyncParsableCommand {
         signal(SIGINT, SIG_IGN)
         source.setEventHandler {
             continuation.yield(.interrupted)
-            syncManager.stop()
+            Task { await syncManager.stop() }
             continuation.finish()
         }
         source.resume()
@@ -221,20 +221,20 @@ final class SyncDelegate: SPVSyncDelegate, @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func spvSync(_ manager: SPVSyncManager, progressUpdated progress: Double, height: Int32) {
+    func spvSync(_ manager: SPVSyncManager, progressUpdated progress: Double, height: Int32) async {
         continuation.yield(.progress(progress, height: height))
     }
 
-    func spvSyncDidComplete(_ manager: SPVSyncManager) {
+    func spvSyncDidComplete(_ manager: SPVSyncManager) async {
         continuation.yield(.completed)
         continuation.finish()
     }
 
-    func spvSync(_ manager: SPVSyncManager, didReceiveHeader header: BlockHeader, height: Int32) {
+    func spvSync(_ manager: SPVSyncManager, didReceiveHeader header: BlockHeader, height: Int32) async {
         // Headers are logged via progress updates
     }
 
-    func spvSync(_ manager: SPVSyncManager, didEncounterError error: Error) {
+    func spvSync(_ manager: SPVSyncManager, didEncounterError error: Error) async {
         continuation.yield(.error(error))
     }
 }

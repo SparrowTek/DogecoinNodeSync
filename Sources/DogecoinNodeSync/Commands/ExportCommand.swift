@@ -8,7 +8,7 @@ enum ExportFormat: String, ExpressibleByArgument, CaseIterable {
     case lzfse
 }
 
-struct ExportCommand: ParsableCommand {
+struct ExportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "export",
         abstract: "Export headers to a bundle file (SQLite default, or LZFSE)"
@@ -26,12 +26,12 @@ struct ExportCommand: ParsableCommand {
     @Option(name: .long, help: "Export format: sqlite (default) or lzfse")
     var format: ExportFormat = .sqlite
 
-    func run() throws {
+    func run() async throws {
         switch format {
         case .sqlite:
             try exportSQLite()
         case .lzfse:
-            try exportLZFSE()
+            try await exportLZFSE()
         }
     }
 
@@ -117,7 +117,7 @@ struct ExportCommand: ParsableCommand {
         print("  Output: \(outputDirectory.path)")
     }
 
-    private func exportLZFSE() throws {
+    private func exportLZFSE() async throws {
         let outputDirectory = try resolveOutputDirectory(output)
         let headersURL = outputDirectory.appendingPathComponent("headers.bin.lzfse")
         let metadataURL = outputDirectory.appendingPathComponent("metadata.json")
@@ -125,7 +125,7 @@ struct ExportCommand: ParsableCommand {
 
         print("Loading header chain...")
         let chain = HeaderChain(network: network.value, storageDirectory: storageURL)
-        guard let tip = chain.tip else {
+        guard let tip = await chain.tip else {
             throw RuntimeError("Header chain has no tip")
         }
 
@@ -147,7 +147,7 @@ struct ExportCommand: ParsableCommand {
 
         var height: Int32 = 0
         while height <= tip.height {
-            guard let stored = chain.getHeader(height: height) else {
+            guard let stored = await chain.getHeader(height: height) else {
                 throw RuntimeError("Missing header at height \(height)")
             }
             let headerData = stored.header.serializeCore()
