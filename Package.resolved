@@ -7,7 +7,7 @@
       "location" : "https://github.com/SparrowTek/DogecoinKit",
       "state" : {
         "branch" : "main",
-        "revision" : "b6b6c21f79f5d5847c16db7413d6b1f2d25af862"
+        "revision" : "df00bc26f227317d62d9e2db887bc999524dcf55"
       }
     },
     {
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/radmakr/libdogecoin",
       "state" : {
-        "branch" : "ios",
-        "revision" : "e2136e552b2b3255241b4ad64f91a17ee36e7c32"
+        "branch" : "0.1.5-dev-swiftpm",
+        "revision" : "3350908af0f9a492a54fed8f6e0fa3a5ace72ffb"
       }
     },
     {
