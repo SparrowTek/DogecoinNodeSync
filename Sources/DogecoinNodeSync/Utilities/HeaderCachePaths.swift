@@ -6,6 +6,18 @@ struct HeaderCachePaths {
     let metadataURL: URL
 }
 
+/// Where `sync` keeps the header database: the directory given, or the
+/// kit's default, `~/Library/Caches/DogecoinKit/headers/<network>`.
+func headerStorageDirectory(custom path: String?, network: NetworkOption) throws -> URL {
+    if let path {
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+    guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+        throw RuntimeError("This system has no caches directory to keep headers in. Pass --storage.")
+    }
+    return caches.appendingPathComponent("DogecoinKit/headers/\(network.rawValue)", isDirectory: true)
+}
+
 func resolveOutputDirectory(_ path: String) throws -> URL {
     let url = URL(fileURLWithPath: path, isDirectory: true)
     let fileManager = FileManager.default
@@ -35,17 +47,7 @@ func resolveHeaderCachePaths(inputPath: String) throws -> HeaderCachePaths {
     let metadataURL: URL
 
     if isDirectory.boolValue {
-        // Directory: look for headers.sqlite first, then headers.bin.lzfse
-        let sqliteURL = inputURL.appendingPathComponent("headers.sqlite")
-        let lzfseURL = inputURL.appendingPathComponent("headers.bin.lzfse")
-
-        if fileManager.fileExists(atPath: sqliteURL.path) {
-            headersURL = sqliteURL
-        } else if fileManager.fileExists(atPath: lzfseURL.path) {
-            headersURL = lzfseURL
-        } else {
-            throw RuntimeError("No headers file found in directory. Expected headers.sqlite or headers.bin.lzfse")
-        }
+        headersURL = inputURL.appendingPathComponent("headers.sqlite")
         metadataURL = inputURL.appendingPathComponent("metadata.json")
     } else {
         // Direct file path

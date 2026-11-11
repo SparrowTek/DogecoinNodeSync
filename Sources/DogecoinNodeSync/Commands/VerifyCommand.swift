@@ -5,28 +5,17 @@ import Foundation
 struct VerifyCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "verify",
-        abstract: "Validate a header cache file (SQLite or LZFSE)"
+        abstract: "Validate a header cache"
     )
 
-    @Argument(help: "Path to headers.sqlite, headers.bin.lzfse, or their directory")
+    @Argument(help: "Path to headers.sqlite or the directory that holds it")
     var input: String
 
     func run() throws {
         let paths = try resolveHeaderCachePaths(inputPath: input)
         let metadata = try loadMetadata(from: paths.metadataURL)
 
-        // Detect format based on file extension or metadata version
-        let isSQLite = paths.headersURL.pathExtension == "sqlite" || metadata.version >= 2
-
-        if isSQLite {
-            try verifySQLite(paths: paths, metadata: metadata)
-        } else {
-            try verifyLZFSE(paths: paths, metadata: metadata)
-        }
-    }
-
-    private func verifySQLite(paths: HeaderCachePaths, metadata: HeaderCacheMetadata) throws {
-        print("Verifying SQLite header cache...")
+        print("Verifying header cache...")
         print("  Expected: \(formatNumber(metadata.headerCount)) headers")
 
         let actualSize = try fileSize(at: paths.headersURL)
@@ -38,18 +27,19 @@ struct VerifyCommand: ParsableCommand {
         print("  Checking SHA256 checksum...")
         let checksum = try sha256Hex(ofFile: paths.headersURL)
         if normalizedHex(checksum) != normalizedHex(metadata.checksumSHA256) {
-            throw RuntimeError("Checksum mismatch: metadata \(metadata.checksumSHA256), computed \(checksum)")
+            // Opening a cache for writing is enough to change it: SQLite
+            // rewrites the file's header when it switches journal modes.
+            throw RuntimeError("""
+                Checksum mismatch: metadata \(metadata.checksumSHA256), computed \(checksum).
+                The file is not the one that was exported. Export it again.
+                """)
         }
         print("  \u{2713} Checksum matches")
 
         print("  Validating database contents...")
-        let db = try HeaderDatabase(path: paths.headersURL.path)
-        let count = try db.getHeaderCount()
-
-        if count != metadata.headerCount {
-            throw RuntimeError("Header count mismatch: metadata \(metadata.headerCount), database \(count)")
-        }
-        print("  \u{2713} Header count matches")
+        // Read-only: opening the file for writing changes it, and the cache
+        // that was just checked would no longer be the cache that ships.
+        let db = try HeaderDatabase(readOnlyPath: paths.headersURL.path)
 
         guard let tip = try db.getTip() else {
             throw RuntimeError("Database has no tip header")
@@ -60,6 +50,20 @@ struct VerifyCommand: ParsableCommand {
         }
         print("  \u{2713} Tip height matches")
 
+        // The metadata counts the best chain: genesis through the tip.
+        if metadata.headerCount != metadata.tipHeight + 1 {
+            throw RuntimeError("Header count mismatch: metadata says \(metadata.headerCount) headers for a tip at height \(metadata.tipHeight)")
+        }
+        // The database may hold more: headers of branches that lost out.
+        let storedCount = try db.getHeaderCount()
+        if storedCount < metadata.headerCount {
+            throw RuntimeError("Header count mismatch: metadata \(metadata.headerCount), database \(storedCount)")
+        }
+        print("  \u{2713} Header count matches")
+        if storedCount > metadata.headerCount {
+            print("    (plus \(formatNumber(storedCount - metadata.headerCount)) headers off the best chain)")
+        }
+
         let tipHashHex = tip.hash.map { String(format: "%02x", $0) }.joined()
         if normalizedHex(tipHashHex) != normalizedHex(metadata.tipHash) {
             throw RuntimeError("Tip hash mismatch: metadata \(metadata.tipHash), database \(tipHashHex)")
@@ -68,17 +72,16 @@ struct VerifyCommand: ParsableCommand {
 
         // Validate chain linkage (sample check)
         print("  Validating chain linkage (sampling)...")
-        try validateChainLinkage(db: db, totalHeaders: metadata.headerCount)
+        try validateChainLinkage(db: db, headerCount: metadata.headerCount)
         print("  \u{2713} Chain linkage valid")
 
         print("")
         print("Verification complete!")
-        print("  Format: SQLite")
         print("  Headers: \(formatNumber(metadata.headerCount))")
         print("  Tip: \(metadata.tipHash.prefix(16))...")
     }
 
-    private func validateChainLinkage(db: HeaderDatabase, totalHeaders: Int) throws {
+    private func validateChainLinkage(db: HeaderDatabase, headerCount: Int) throws {
         // Check genesis
         guard let genesis = try db.getHeader(height: 0) else {
             throw RuntimeError("Missing genesis header")
@@ -87,9 +90,9 @@ struct VerifyCommand: ParsableCommand {
             throw RuntimeError("Genesis has non-zero prev block")
         }
 
-        // Sample random heights to verify linkage
-        let sampleHeights = [1, 10, 100, 1000, 10000, 100000, 500000, 1000000, totalHeaders - 1]
-            .filter { $0 > 0 && $0 < totalHeaders }
+        // Sample heights to verify linkage
+        let sampleHeights = [1, 10, 100, 1000, 10000, 100000, 500000, 1000000, headerCount - 1]
+            .filter { $0 > 0 && $0 < headerCount }
 
         for height in sampleHeights {
             guard let header = try db.getHeader(height: Int32(height)) else {
@@ -102,70 +105,5 @@ struct VerifyCommand: ParsableCommand {
                 throw RuntimeError("Chain linkage broken at height \(height)")
             }
         }
-    }
-
-    private func verifyLZFSE(paths: HeaderCachePaths, metadata: HeaderCacheMetadata) throws {
-        let compressedSize = try fileSize(at: paths.headersURL)
-
-        print("Verifying LZFSE header cache...")
-        print("  Expected: \(formatNumber(metadata.headerCount)) headers")
-
-        if metadata.compressedSize != compressedSize {
-            throw RuntimeError("Compressed size mismatch: metadata \(metadata.compressedSize) bytes, file \(compressedSize) bytes")
-        }
-        print("  \u{2713} File size matches")
-
-        print("  Checking SHA256 checksum...")
-        let checksum = try sha256Hex(ofFile: paths.headersURL)
-        if normalizedHex(checksum) != normalizedHex(metadata.checksumSHA256) {
-            throw RuntimeError("Checksum mismatch: metadata \(metadata.checksumSHA256), computed \(checksum)")
-        }
-        print("  \u{2713} Checksum matches")
-
-        print("  Decompressing and validating headers...")
-        var validator = HeaderStreamValidator()
-        var uncompressedSize = 0
-        var lastUpdateTime = Date()
-        let expectedUncompressed = metadata.uncompressedSize
-
-        try decompressLZFSE(from: paths.headersURL) { chunk in
-            uncompressedSize += chunk.count
-            try validator.consume(chunk)
-
-            let now = Date()
-            if now.timeIntervalSince(lastUpdateTime) >= 0.1 {
-                lastUpdateTime = now
-                let progress = Double(uncompressedSize) / Double(expectedUncompressed)
-                printProgress(current: validator.headerCount, total: metadata.headerCount, percent: progress, indent: "  ")
-            }
-        }
-        try validator.finalize()
-        printProgress(current: metadata.headerCount, total: metadata.headerCount, percent: 1.0, indent: "  ")
-        print("") // New line after progress
-
-        if metadata.headerCount != validator.headerCount {
-            throw RuntimeError("Header count mismatch: metadata \(metadata.headerCount), decoded \(validator.headerCount)")
-        }
-        print("  \u{2713} Header count matches")
-
-        let expectedTipHeight = metadata.headerCount - 1
-        if metadata.tipHeight != expectedTipHeight {
-            throw RuntimeError("Tip height mismatch: metadata \(metadata.tipHeight), expected \(expectedTipHeight)")
-        }
-
-        if normalizedHex(metadata.tipHash) != normalizedHex(validator.tipHashHex) {
-            throw RuntimeError("Tip hash mismatch: metadata \(metadata.tipHash), decoded \(validator.tipHashHex)")
-        }
-        print("  \u{2713} Tip hash matches")
-
-        if metadata.uncompressedSize != uncompressedSize {
-            throw RuntimeError("Uncompressed size mismatch: metadata \(metadata.uncompressedSize) bytes, decoded \(uncompressedSize) bytes")
-        }
-
-        print("")
-        print("Verification complete!")
-        print("  Format: LZFSE")
-        print("  Headers: \(formatNumber(metadata.headerCount))")
-        print("  Tip: \(metadata.tipHash.prefix(16))...")
     }
 }

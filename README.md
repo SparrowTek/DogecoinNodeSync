@@ -58,13 +58,13 @@ swift run DogecoinNodeSync sync --network testnet -s /path/to/headers
 - The initial sync downloads ~6 million headers and takes several hours
 - Progress is saved incrementally - interrupt with Ctrl+C and resume later
 - The system will not sleep during sync
-- After 10 consecutive errors or 5 minutes without progress, sync stops automatically
+- After 5 minutes without progress, or if the header database cannot be read, sync stops; run it again to resume
 
 ---
 
 ## export
 
-Export synced headers to a portable bundle file for use in the Avocadoge iOS app.
+Export synced headers to a header cache — `headers.sqlite` plus `metadata.json` — for use in the Avocadoge iOS app.
 
 ```bash
 swift run DogecoinNodeSync export --output <path> [OPTIONS]
@@ -77,16 +77,12 @@ swift run DogecoinNodeSync export --output <path> [OPTIONS]
 | `--output <path>`         | Output directory for exported files **(required)** | —                                                |
 | `--network <network>`     | Network to export (`mainnet` or `testnet`)         | `mainnet`                                        |
 | `--storage <path>`        | Source header cache location                       | `~/Library/Caches/DogecoinKit/headers/<network>` |
-| `--format <format>`       | Export format (`sqlite` or `lzfse`)                | `sqlite`                                         |
 
 ### Examples
 
 ```bash
-# Export mainnet headers to SQLite format
+# Export mainnet headers
 swift run DogecoinNodeSync export --output ./headers
-
-# Export to LZFSE compressed format (smaller file size)
-swift run DogecoinNodeSync export --output ./headers --format lzfse
 
 # Export testnet headers
 swift run DogecoinNodeSync export --network testnet --output ./testnet-headers
@@ -98,8 +94,10 @@ swift run DogecoinNodeSync export --output ./headers --storage ~/Desktop/dogecoi
 ### Output Files
 
 The export creates two files in the output directory:
-- `headers.sqlite` (or `headers.bin.lzfse`) — The header data
+- `headers.sqlite` — The header data
 - `metadata.json` — Metadata including header count, tip hash, and checksum
+
+`headerCount` in the metadata is the length of the best chain: the tip's height plus one, for the genesis block. The database may hold a few more headers, from branches that lost out.
 
 ---
 
@@ -115,7 +113,7 @@ swift run DogecoinNodeSync verify <path>
 
 | Argument  | Description                                                        |
 |-----------|--------------------------------------------------------------------|
-| `<path>`  | Path to `headers.sqlite`, `headers.bin.lzfse`, or their directory  |
+| `<path>`  | Path to `headers.sqlite` or the directory that holds it            |
 
 ### Examples
 
@@ -149,7 +147,7 @@ swift run DogecoinNodeSync inspect <path>
 
 | Argument  | Description                                                        |
 |-----------|--------------------------------------------------------------------|
-| `<path>`  | Path to `headers.sqlite`, `headers.bin.lzfse`, or their directory  |
+| `<path>`  | Path to `headers.sqlite` or the directory that holds it            |
 
 ### Example
 
@@ -161,7 +159,6 @@ swift run DogecoinNodeSync inspect ./headers
 
 ```
 Header cache:
-  Format: SQLite
   Version: 2
   Network: mainnet
   Headers: 6,123,456
@@ -203,14 +200,3 @@ Header cache:
 |----------------|--------------------------------------------------------|
 | Synced headers | `~/Library/Caches/DogecoinKit/headers/<network>/`      |
 | Exported files | User-specified via `--output`                          |
-
----
-
-## Export Formats
-
-| Format   | File                  | Best For                                    |
-|----------|-----------------------|---------------------------------------------|
-| `sqlite` | `headers.sqlite`      | Fast loading, random access, larger size    |
-| `lzfse`  | `headers.bin.lzfse`   | Smaller bundle size, sequential access only |
-
-SQLite is recommended for the iOS app due to faster load times.

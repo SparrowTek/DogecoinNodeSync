@@ -97,15 +97,3 @@ final class ProgressIndicator: @unchecked Sendable {
         fflush(stdout)
     }
 }
-
-/// Prints a progress bar to the terminal (for export/verify operations)
-func printProgress(current: Int, total: Int, percent: Double, indent: String = "") {
-    let barWidth = 30
-    let filledWidth = Int(percent * Double(barWidth))
-    let emptyWidth = barWidth - filledWidth
-    let filled = String(repeating: "█", count: filledWidth)
-    let empty = String(repeating: "░", count: emptyWidth)
-    let percentStr = String(format: "%5.1f%%", percent * 100)
-    print("\r\(indent)[\(filled)\(empty)] \(percentStr)  \(formatNumber(current)) / \(formatNumber(total))", terminator: "")
-    fflush(stdout)
-}

@@ -21,7 +21,8 @@ func formatBytes(_ bytes: Int) -> String {
 }
 
 func fileSize(at url: URL) throws -> Int {
-    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    // Of the file itself, not of a link that points to it.
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)
     guard let sizeNumber = attributes[.size] as? NSNumber else {
         throw RuntimeError("Unable to read file size: \(url.path)")
     }

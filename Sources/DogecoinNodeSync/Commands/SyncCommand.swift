@@ -17,30 +17,21 @@ struct SyncCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Network to sync (mainnet or testnet)")
-    var network: String = "mainnet"
+    var network: NetworkOption = .mainnet
 
     @Option(name: [.short, .long], help: "Custom storage directory for headers")
     var storage: String?
 
     func run() async throws {
-        let dogecoinNetwork = try parseNetwork(network)
-        let storageURL = storage.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let storageURL = try headerStorageDirectory(custom: storage, network: network)
 
-        let networkName = dogecoinNetwork == .mainnet ? "mainnet" : "testnet"
-        print("Starting header sync for \(networkName)...")
+        print("Starting header sync for \(network.rawValue)...")
+        print("Storage: \(storageURL.path)")
 
-        // Determine actual storage path for display
-        let displayPath: String
-        if let path = storageURL?.path {
-            displayPath = path
-        } else {
-            let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            displayPath = caches.appendingPathComponent("DogecoinKit/headers/\(networkName)").path
-        }
-        print("Storage: \(displayPath)")
-
-        let syncManager = SPVSyncManager(
-            network: dogecoinNetwork,
+        // Opens the header database, so the height below is the height on
+        // disk — not the -1 of a database nobody has looked at yet.
+        let syncManager = try await SPVSyncManager.create(
+            network: network.value,
             storageDirectory: storageURL
         )
 
@@ -73,20 +64,16 @@ struct SyncCommand: AsyncParsableCommand {
         let progressIndicator = ProgressIndicator()
         progressIndicator.startSpinner(message: "Connecting to peers")
 
-        // Configuration
-        let maxConsecutiveErrors = 10
         let noProgressTimeout: TimeInterval = 300
 
-        // Process events with error tracking and progress timeout
         var hasReceivedFirstProgress = false
-        var consecutiveErrors = 0
         let progressTracker = ProgressTracker()
-        await progressTracker.initialize(height: await syncManager.currentHeight)
+        await progressTracker.initialize(height: startingHeight)
 
         // Start a background task to check for progress timeout
         let timeoutTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // Check every 30 seconds
+                try? await Task.sleep(for: .seconds(30))
 
                 let timeSinceProgress = await progressTracker.timeSinceLastProgress()
                 if timeSinceProgress > noProgressTimeout {
@@ -102,12 +89,7 @@ struct SyncCommand: AsyncParsableCommand {
             switch event {
             case .progress(let progress, let height):
                 let target = await syncManager.targetHeight
-
-                // Reset error count and update progress time on successful progress
-                let didProgress = await progressTracker.recordProgress(height: height)
-                if didProgress {
-                    consecutiveErrors = 0
-                }
+                _ = await progressTracker.recordProgress(height: height)
 
                 if !hasReceivedFirstProgress {
                     hasReceivedFirstProgress = true
@@ -130,28 +112,18 @@ struct SyncCommand: AsyncParsableCommand {
                 print("Final height: \(finalHeight)")
                 print("")
                 print("Next step: Export headers")
-                print("  swift run DogecoinNodeSync export --network \(networkName) --output <path>")
+                print("  swift run DogecoinNodeSync export --network \(network.rawValue) --output <path>")
                 return
 
             case .error(let error):
-                consecutiveErrors += 1
+                // The kit deals with trouble from single peers itself. What
+                // it reports is an error it cannot go on from — the header
+                // database could not be read — and it has stopped.
                 progressIndicator.stopSpinner()
                 print("")
-                print("Error (\(consecutiveErrors)/\(maxConsecutiveErrors)): \(error.localizedDescription)")
-
-                if consecutiveErrors >= maxConsecutiveErrors {
-                    print("")
-                    print("Too many consecutive errors. Stopping sync.")
-                    print("Current height: \(await syncManager.currentHeight)")
-                    print("Progress has been saved. Run again to resume.")
-                    await syncManager.stop()
-                    return
-                }
-
-                // Restart spinner if we're still going
-                if hasReceivedFirstProgress {
-                    progressIndicator.startSpinner(message: "Recovering from error")
-                }
+                print("Sync failed: \(error.localizedDescription)")
+                print("Headers stored so far are kept. Run again to resume.")
+                throw ExitCode.failure
 
             case .timeout:
                 progressIndicator.stopSpinner()
@@ -172,17 +144,6 @@ struct SyncCommand: AsyncParsableCommand {
                 print("Progress has been saved. Run again to resume.")
                 return
             }
-        }
-    }
-
-    private func parseNetwork(_ value: String) throws -> DogecoinNetwork {
-        switch value.lowercased() {
-        case "mainnet":
-            return .mainnet
-        case "testnet":
-            return .testnet
-        default:
-            throw ValidationError("Unknown network: \(value). Use 'mainnet' or 'testnet'.")
         }
     }
 
@@ -230,11 +191,8 @@ final class SyncDelegate: SPVSyncDelegate, @unchecked Sendable {
         continuation.finish()
     }
 
-    func spvSync(_ manager: SPVSyncManager, didReceiveHeader header: BlockHeader, height: Int32) async {
-        // Headers are logged via progress updates
-    }
-
     func spvSync(_ manager: SPVSyncManager, didEncounterError error: Error) async {
         continuation.yield(.error(error))
+        continuation.finish()
     }
 }
